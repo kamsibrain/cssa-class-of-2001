@@ -540,7 +540,6 @@
       document.querySelector("#google-auth-error").hidden = true;
       document.querySelector("#signup-error").hidden = true;
       updateBirthdayDays();
-      renderGoogleSignInButton();
     }
 
     function showProfileForm(email, fullName = "") {
@@ -830,6 +829,7 @@
       if (target.closest("[data-join]")) {
         beginSignup();
         dialog.showModal();
+        renderGoogleSignInButton();
       }
       if (target.closest("[data-back-to-email]")) {
         document.querySelector("#signup-profile-step").hidden = true;
@@ -865,6 +865,9 @@
     });
 
     document.querySelector("#birth-month").addEventListener("change", () => updateBirthdayDays());
+    window.addEventListener("resize", () => {
+      if (dialog.open && !document.querySelector("#signup-google-step").hidden) renderGoogleSignInButton();
+    });
 
     joinForm.addEventListener("submit", async event => {
       event.preventDefault();
