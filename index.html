@@ -144,6 +144,11 @@
     .dialog-body { padding: 19px 23px 23px; }
     .google-signin-button { display: flex; justify-content: center; min-height: 44px; margin: 4px 0 14px; }
     .google-signin-button iframe { max-width: 100%; }
+    .auth-divider { display: flex; align-items: center; gap: 12px; margin: 14px 0; color: var(--muted); font-size: 10px; }
+    .auth-divider::before, .auth-divider::after { height: 1px; flex: 1; background: var(--line); content: ""; }
+    .auth-options { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
+    .auth-options .text-button { padding: 5px 0; }
+    .auth-status { margin-top: 12px; }
     .photo-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
     .photo-fields .field { min-width: 0; }
     .photo-fields input[type="file"] { min-height: 38px; padding: 7px; font-size: 10px; }
@@ -273,11 +278,17 @@
   </footer>
   <dialog id="join-dialog" aria-labelledby="dialog-title">
     <form id="join-form">
-      <div class="dialog-head"><div><h2 id="dialog-title">Join the class</h2><p id="dialog-subtitle">Sign in with Google to continue to your alumni profile.</p></div><button class="close-button" type="button" data-close aria-label="Close">×</button></div>
+      <div class="dialog-head"><div><h2 id="dialog-title">Join the class</h2><p id="dialog-subtitle">Sign in with email and password or Google to continue.</p></div><button class="close-button" type="button" data-close aria-label="Close">×</button></div>
       <div class="dialog-body">
         <section id="signup-google-step">
+          <div class="field"><label for="auth-email">Email address</label><input id="auth-email" name="auth_email" type="email" autocomplete="email" maxlength="254" placeholder="you@example.com" required></div>
+          <div class="field"><label for="auth-password">Password</label><input id="auth-password" name="auth_password" type="password" autocomplete="current-password" minlength="6" required></div>
+          <button class="form-submit" id="email-auth-submit" type="submit">Sign in with email</button>
+          <div class="auth-options"><button class="text-button" id="auth-mode-toggle" type="button">Create an account</button><button class="text-button" type="button" data-password-reset>Forgot password?</button></div>
+          <div id="email-auth-error" class="status-message error auth-status" role="alert" hidden></div>
+          <div class="auth-divider">or continue with Google</div>
           <div id="google-signin-button" class="google-signin-button"></div>
-          <p class="form-note">Google confirms your account email. After signup, your profile is stored in the class database and photos in the restricted Drive folder.</p>
+          <p class="form-note">Email accounts must verify their address before accessing member profiles. Google sign-in remains available. After signup, your profile is stored in the class database and photos in the restricted Drive folder.</p>
           <div id="google-auth-error" class="status-message error" role="alert" hidden></div>
         </section>
         <section id="signup-profile-step" hidden>
@@ -298,6 +309,8 @@
       </div>
     </form>
   </dialog>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script>
     const main = document.querySelector("#main-content");
     const dialog = document.querySelector("#join-dialog");
@@ -306,6 +319,12 @@
     const ADMIN_EMAIL = "jamesuzoka83@gmail.com";
     const GOOGLE_CLIENT_ID = "108266897974-jial2g7n581mifd4rm1i86sk8shjul65.apps.googleusercontent.com";
     const APPS_SCRIPT_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbz8glP3BeeDZ2Ky8VJl89O-pQBGuSQJJCYMj2Dm2yZnXyvVMvyWQ8SbZ4_Guu3bFp0sfQ/exec";
+    const FIREBASE_CONFIG = {
+      apiKey: "AIzaSyC9nC4no3d-jlpoYQtmnesbY9aXH6Gjt9Q",
+      authDomain: "cssa-class-2001-alumni.firebaseapp.com",
+      projectId: "cssa-class-2001-alumni",
+      appId: "1:665657599651:web:4467b8c1c2bfd8395c0116"
+    };
     let activePage = "home";
     let memberSearch = "";
     let localAdmin = false;
@@ -317,6 +336,11 @@
     let googleSignInPending = false;
     let currentGoogleAccount = null;
     let currentGoogleIdToken = "";
+    let currentAuthProvider = "";
+    let firebaseAuth = null;
+    let firebaseAuthInitError = "";
+    let emailAuthMode = "signin";
+    let emailAuthPending = false;
     let remoteProfiles = [];
     let remoteProfileError = "";
     let profilePhotoCache = new Map();
@@ -527,9 +551,13 @@
       return false;
     }
 
-    function sendBackendRequest(action, data = {}) {
-      if (!currentGoogleIdToken) return Promise.reject(new Error("Sign in with Google before accessing member profiles."));
-      return initializeBackendBridge().then(() => new Promise((resolve, reject) => {
+    async function sendBackendRequest(action, data = {}) {
+      if (!currentGoogleIdToken) throw new Error("Sign in before accessing member profiles.");
+      await initializeBackendBridge();
+      if (currentAuthProvider === "firebase" && firebaseAuth?.currentUser) {
+        currentGoogleIdToken = await firebaseAuth.currentUser.getIdToken();
+      }
+      return new Promise((resolve, reject) => {
         const requestId = `cssa-${Date.now()}-${++backendRequestSequence}`;
         const timeout = window.setTimeout(() => {
           pendingBackendRequests.delete(requestId);
@@ -551,9 +579,9 @@
         }
         backendBridgeWindow.postMessage({
           id: requestId,
-          request: { ...data, action, idToken: currentGoogleIdToken }
+          request: { ...data, action, authProvider: currentAuthProvider || "google", idToken: currentGoogleIdToken }
         }, "*");
-      }));
+      });
     }
 
     window.addEventListener("message", event => {
@@ -684,21 +712,43 @@
     function beginSignup() {
       joinForm.reset();
       activeSignupEmail = "";
+      emailAuthMode = "signin";
       document.querySelector("#signup-google-step").hidden = false;
       document.querySelector("#signup-profile-step").hidden = true;
+      setSectionDisabled("#signup-profile-step", true);
+      setSectionDisabled("#signup-google-step", false);
       document.querySelector("#dialog-title").textContent = "Join the class";
-      document.querySelector("#dialog-subtitle").textContent = "Sign in with Google to continue to your alumni profile.";
+      document.querySelector("#dialog-subtitle").textContent = "Sign in with email and password or Google to continue.";
       document.querySelector("#google-auth-error").hidden = true;
+      document.querySelector("#email-auth-error").hidden = true;
       document.querySelector("#signup-error").hidden = true;
+      updateEmailAuthMode();
       updateBirthdayDays();
+    }
+
+    function setSectionDisabled(selector, disabled) {
+      document.querySelectorAll(`${selector} input, ${selector} select, ${selector} button`).forEach(control => {
+        control.disabled = disabled;
+      });
+    }
+
+    function updateEmailAuthMode(mode = "signin") {
+      emailAuthMode = mode;
+      const password = document.querySelector("#auth-password");
+      password.autocomplete = mode === "signup" ? "new-password" : "current-password";
+      document.querySelector("#email-auth-submit").textContent = mode === "signup" ? "Create account" : "Sign in with email";
+      document.querySelector("#auth-mode-toggle").textContent = mode === "signup" ? "Already have an account? Sign in" : "Create an account";
+      document.querySelector("[data-password-reset]").hidden = mode === "signup";
     }
 
     function showProfileForm(email, fullName = "") {
       activeSignupEmail = email;
       document.querySelector("#signup-google-step").hidden = true;
       document.querySelector("#signup-profile-step").hidden = false;
+      setSectionDisabled("#signup-google-step", true);
+      setSectionDisabled("#signup-profile-step", false);
       document.querySelector("#dialog-title").textContent = "Your class profile";
-      document.querySelector("#dialog-subtitle").textContent = `Google account: ${email}`;
+      document.querySelector("#dialog-subtitle").textContent = `${currentAuthProvider === "firebase" ? "Email account" : "Google account"}: ${email}`;
       document.querySelector("#signup-error").hidden = true;
 
       document.querySelector("#full-name").value = fullName;
@@ -714,6 +764,188 @@
 
     function decodeJwtPart(value) {
       return JSON.parse(new TextDecoder().decode(decodeBase64Url(value)));
+    }
+
+    function initializeFirebaseAuth() {
+      if (!window.firebase) {
+        firebaseAuthInitError = "The Firebase authentication scripts could not load.";
+        return false;
+      }
+      if (!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.projectId || !FIREBASE_CONFIG.appId) {
+        firebaseAuthInitError = "Firebase web app settings are missing.";
+        return false;
+      }
+      if (firebaseAuth) return true;
+      try {
+        const app = window.firebase.apps.length ? window.firebase.app() : window.firebase.initializeApp(FIREBASE_CONFIG);
+        firebaseAuth = app.auth();
+        firebaseAuth.onAuthStateChanged(async user => {
+          if (!user || emailAuthPending || currentAuthProvider === "firebase") return;
+          if (!user.emailVerified) {
+            await firebaseAuth.signOut();
+            return;
+          }
+          try {
+            await completeAuthenticatedSignIn({
+              email: user.email,
+              name: user.displayName || "",
+              idToken: await user.getIdToken(),
+              provider: "firebase",
+              autoRestore: true
+            });
+          } catch (error) {
+            clearAuthenticatedSession();
+            showToast(`Could not restore your sign-in: ${error.message}`);
+          }
+        });
+        return true;
+      } catch (error) {
+        firebaseAuthInitError = error.message;
+        return false;
+      }
+    }
+
+    function clearAuthenticatedSession() {
+      localAdmin = false;
+      currentGoogleAccount = null;
+      currentGoogleIdToken = "";
+      currentAuthProvider = "";
+      remoteProfiles = [];
+      remoteProfileError = "";
+      profilePhotoCache.clear();
+    }
+
+    async function completeAuthenticatedSignIn({ email, name, idToken, provider, autoRestore = false }) {
+      currentGoogleAccount = { email, name };
+      currentGoogleIdToken = idToken;
+      currentAuthProvider = provider;
+      localAdmin = email === ADMIN_EMAIL;
+      if (localAdmin) localMessage = "";
+      const existingProfile = await sendBackendRequest("getMyProfile");
+      if (existingProfile) {
+        const profiles = await sendBackendRequest("listProfiles");
+        if (!Array.isArray(profiles)) throw new Error("The profile database returned an invalid roster.");
+        remoteProfiles = profiles;
+        remoteProfileError = "";
+        profilePhotoCache.clear();
+        if (dialog.open) dialog.close();
+        activePage = isAdmin() ? "admin" : "members";
+        render();
+        showToast(`Welcome back, ${existingProfile.fullName.split(/\s+/)[0]}. Your ${provider === "firebase" ? "email" : "Google"} sign-in was verified.`);
+        return;
+      }
+      if (autoRestore && !dialog.open) {
+        beginSignup();
+        dialog.showModal();
+      }
+      showProfileForm(email, name);
+    }
+
+    function firebaseAuthError(error) {
+      const messages = {
+        "auth/email-already-in-use": "An account already uses this email. Sign in instead.",
+        "auth/invalid-credential": "The email or password is incorrect.",
+        "auth/invalid-email": "Enter a valid email address.",
+        "auth/too-many-requests": "Too many attempts. Wait a little and try again.",
+        "auth/user-disabled": "This account is disabled. Contact the class administrator.",
+        "auth/user-not-found": "No account was found for this email. Create an account first.",
+        "auth/weak-password": "Choose a password with at least 8 characters.",
+        "auth/wrong-password": "The email or password is incorrect."
+      };
+      return messages[error?.code] || error?.message || "Email sign-in failed. Please try again.";
+    }
+
+    async function handleEmailPasswordSubmit() {
+      const errorBox = document.querySelector("#email-auth-error");
+      errorBox.hidden = true;
+      if (!initializeFirebaseAuth()) {
+        errorBox.textContent = firebaseAuthInitError
+          ? `Firebase authentication could not initialize: ${firebaseAuthInitError}`
+          : "Email/password sign-in is not configured yet. Firebase authentication settings are missing.";
+        errorBox.hidden = false;
+        return;
+      }
+      const email = document.querySelector("#auth-email").value.trim().toLowerCase();
+      const password = document.querySelector("#auth-password").value;
+      if (emailAuthMode === "signup" && password.length < 8) {
+        errorBox.textContent = "Choose a password with at least 8 characters.";
+        errorBox.hidden = false;
+        return;
+      }
+      const submitButton = document.querySelector("#email-auth-submit");
+      emailAuthPending = true;
+      setSectionDisabled("#signup-google-step", true);
+      submitButton.textContent = emailAuthMode === "signup" ? "Creating account…" : "Signing in…";
+      try {
+        if (emailAuthMode === "signup") {
+          const credential = await firebaseAuth.createUserWithEmailAndPassword(email, password);
+          await credential.user.sendEmailVerification();
+          await firebaseAuth.signOut();
+          document.querySelector("#auth-password").value = "";
+          errorBox.classList.remove("error");
+          errorBox.textContent = "Account created. Check your email and verify the address, then sign in here to complete your profile.";
+          errorBox.hidden = false;
+        } else {
+          const credential = await firebaseAuth.signInWithEmailAndPassword(email, password);
+          if (!credential.user.emailVerified) {
+            await firebaseAuth.signOut();
+            throw new Error("Verify your email address using the link we sent before signing in.");
+          }
+          await completeAuthenticatedSignIn({
+            email: credential.user.email,
+            name: credential.user.displayName || "",
+            idToken: await credential.user.getIdToken(),
+            provider: "firebase"
+          });
+        }
+      } catch (error) {
+        const message = firebaseAuthError(error);
+        if (firebaseAuth.currentUser) {
+          try {
+            await firebaseAuth.signOut();
+          } catch (signOutError) {
+            errorBox.textContent = `${message} Sign-out did not complete: ${signOutError.message}`;
+            errorBox.hidden = false;
+          }
+        }
+        clearAuthenticatedSession();
+        errorBox.classList.add("error");
+        if (errorBox.hidden) errorBox.textContent = message;
+        errorBox.hidden = false;
+      } finally {
+        emailAuthPending = false;
+        if (dialog.open && !document.querySelector("#signup-google-step").hidden) {
+          setSectionDisabled("#signup-google-step", false);
+          updateEmailAuthMode(emailAuthMode);
+        }
+      }
+    }
+
+    async function sendPasswordReset() {
+      const errorBox = document.querySelector("#email-auth-error");
+      const email = document.querySelector("#auth-email").value.trim().toLowerCase();
+      errorBox.classList.remove("error");
+      if (!email) {
+        errorBox.classList.add("error");
+        errorBox.textContent = "Enter your email address first.";
+        errorBox.hidden = false;
+        return;
+      }
+      if (!initializeFirebaseAuth()) {
+        errorBox.classList.add("error");
+        errorBox.textContent = "Password reset is not available until Firebase is configured.";
+        errorBox.hidden = false;
+        return;
+      }
+      try {
+        await firebaseAuth.sendPasswordResetEmail(email);
+        errorBox.textContent = "If an account exists for that address, a password reset email has been sent.";
+        errorBox.hidden = false;
+      } catch (error) {
+        errorBox.classList.add("error");
+        errorBox.textContent = firebaseAuthError(error);
+        errorBox.hidden = false;
+      }
     }
 
     async function getGoogleSigningKey(keyId) {
@@ -807,30 +1039,14 @@
       try {
         if (!response?.credential) throw new Error("Google did not return a sign-in credential.");
         verifiedAccount = await verifyGoogleCredential(response.credential);
-        currentGoogleAccount = verifiedAccount;
-        currentGoogleIdToken = response.credential;
-        localAdmin = verifiedAccount.email === ADMIN_EMAIL;
-        if (localAdmin) localMessage = "";
-        const existingProfile = await sendBackendRequest("getMyProfile");
-        if (existingProfile) {
-          const profiles = await sendBackendRequest("listProfiles");
-          if (!Array.isArray(profiles)) throw new Error("The profile database returned an invalid roster.");
-          remoteProfiles = profiles;
-          remoteProfileError = "";
-          profilePhotoCache.clear();
-          dialog.close();
-          activePage = isAdmin() ? "admin" : "members";
-          render();
-          showToast(`Welcome back, ${existingProfile.fullName.split(/\s+/)[0]}. Your Google account was verified.`);
-        } else {
-          showProfileForm(verifiedAccount.email, verifiedAccount.name);
-        }
+        await completeAuthenticatedSignIn({
+          email: verifiedAccount.email,
+          name: verifiedAccount.name,
+          idToken: response.credential,
+          provider: "google"
+        });
       } catch (error) {
-        currentGoogleAccount = null;
-        currentGoogleIdToken = "";
-        localAdmin = false;
-        remoteProfiles = [];
-        profilePhotoCache.clear();
+        clearAuthenticatedSession();
         errorBox.textContent = `${verifiedAccount ? "Could not access the member database" : "Google sign-in failed"}: ${error.message}`;
         errorBox.hidden = false;
       } finally {
@@ -986,13 +1202,21 @@
         dialog.showModal();
         renderGoogleSignInButton();
       }
+      if (target.closest("#auth-mode-toggle")) {
+        updateEmailAuthMode(emailAuthMode === "signin" ? "signup" : "signin");
+        document.querySelector("#email-auth-error").hidden = true;
+      }
+      if (target.closest("[data-password-reset]")) sendPasswordReset();
       if (target.closest("[data-back-to-email]")) {
         document.querySelector("#signup-profile-step").hidden = true;
         document.querySelector("#signup-google-step").hidden = false;
+        setSectionDisabled("#signup-profile-step", true);
+        setSectionDisabled("#signup-google-step", false);
         document.querySelector("#dialog-title").textContent = "Join the class";
-        document.querySelector("#dialog-subtitle").textContent = "Sign in with Google to continue to your alumni profile.";
+        document.querySelector("#dialog-subtitle").textContent = "Sign in with email and password or Google to continue.";
         document.querySelector("#signup-error").hidden = true;
         document.querySelector("#google-auth-error").hidden = true;
+        document.querySelector("#email-auth-error").hidden = true;
         activeSignupEmail = "";
         renderGoogleSignInButton();
       }
@@ -1011,27 +1235,30 @@
         render();
       }
       if (target.closest("[data-signout]")) {
-        localAdmin = false;
         editingContentId = "";
-        currentGoogleAccount = null;
-        currentGoogleIdToken = "";
-        remoteProfiles = [];
-        remoteProfileError = "";
-        profilePhotoCache.clear();
+        const signedInWithFirebase = currentAuthProvider === "firebase";
+        clearAuthenticatedSession();
         window.google?.accounts?.id?.disableAutoSelect();
+        if (signedInWithFirebase && firebaseAuth) {
+          firebaseAuth.signOut().catch(error => showToast(`Could not sign out: ${error.message}`));
+        }
         render();
         showToast("You have signed out. Member profiles and photos are no longer available.");
       }
     });
 
     document.querySelector("#birth-month").addEventListener("change", () => updateBirthdayDays());
+    initializeFirebaseAuth();
     window.addEventListener("resize", () => {
       if (dialog.open && !document.querySelector("#signup-google-step").hidden) renderGoogleSignInButton();
     });
 
     joinForm.addEventListener("submit", async event => {
       event.preventDefault();
-      if (document.querySelector("#signup-profile-step").hidden) return;
+      if (document.querySelector("#signup-profile-step").hidden) {
+        if (!document.querySelector("#signup-google-step").hidden) await handleEmailPasswordSubmit();
+        return;
+      }
       const errorBox = document.querySelector("#signup-error");
       const submitButton = joinForm.querySelector('button[type="submit"]');
       const data = new FormData(joinForm);
