@@ -245,7 +245,7 @@
         <button type="button" data-page="birthdays">Birthdays</button>
         <button type="button" data-page="gallery">Gallery</button>
         <button type="button" data-page="exco">Exco</button>
-        <button type="button" data-page="admin">Admin</button>
+        <button type="button" data-page="admin" hidden>Admin</button>
         <button class="join-button mobile-join" type="button" data-join>Sign in / Join</button>
       </nav>
       <button class="join-button desktop-join" type="button" data-join><span aria-hidden="true">↗</span> Sign in / Join</button>
@@ -421,14 +421,10 @@
     }
 
     function adminPage() {
-      if (!isAdmin()) {
-        return `<div class="page"><div class="page-heading"><div><p class="eyebrow">Site management</p><h1>Admin</h1><p>Manage homepage highlights, news, events, reports, member profiles, birthdays, gallery entries, and executive profiles.</p></div></div>${localMessage ? `<div class="status-message error">${escapeHTML(localMessage)}</div>` : ""}<section class="card admin-panel"><h2>Administrator access</h2><p>Enter the authorized admin email to unlock this browser’s local content editor.</p><div class="status-message error"><strong>Local preview only:</strong> this email check is not secure authentication. Anyone with access to this browser or app code can edit local content. Changes are saved only in this browser and are not shared online.</div><form id="admin-login-form"><div class="field"><label for="admin-email">Admin email</label><input id="admin-email" name="email" type="email" autocomplete="email" value="${ADMIN_EMAIL}" required></div><button class="form-submit" type="submit">Open local admin</button></form></section></div>`;
-      }
-
       const currentItem = contentItems.find(item => item.id === editingContentId);
       const savedItems = contentItems.length ? contentItems.map(item => `<article class="admin-item"><div><h3>${escapeHTML(item.title)}</h3><p>${escapeHTML(sectionNames[item.section] || item.section)} · ${item.published ? "Published" : "Draft"}</p></div><div class="admin-item-actions"><button class="admin-secondary" type="button" data-edit="${escapeHTML(item.id)}">Edit</button><button class="admin-secondary" type="button" data-delete="${escapeHTML(item.id)}">Delete</button></div></article>`).join("") : `<div class="notice">No content has been added yet. Create your first item above.</div>`;
       const sectionOptions = Object.entries(sectionNames).map(([value, name]) => `<option value="${value}">${escapeHTML(name)}</option>`).join("");
-      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">Site management</p><h1>Admin dashboard</h1><p>Manage all public page content and profiles. Site layout and styling remain part of the app code.</p></div></div>${localMessage ? `<div class="status-message error">${escapeHTML(localMessage)}</div>` : ""}<div class="admin-user"><span>Local admin: <strong>${ADMIN_EMAIL}</strong></span><button class="admin-secondary" type="button" data-signout>Lock admin</button></div><div class="status-message error"><strong>Local preview only:</strong> changes are stored in this browser and do not sync to other people or devices. This email check is not secure authentication.</div><section class="card admin-panel"><h2>${currentItem ? "Edit content" : "Add content"}</h2><p>Choose the page section, then add its content. Use HTTPS image URLs for member photos, gallery images, and executive portraits. Unpublished items stay hidden from public sections.</p><form id="content-form" data-id="${currentItem ? escapeHTML(currentItem.id) : ""}"><div class="admin-grid"><div class="field"><label for="content-section">Page section</label><select id="content-section" name="section" required>${sectionOptions}</select></div><div class="field"><label for="content-date">Event / birthday date (optional)</label><input id="content-date" name="event_date" type="date" value="${escapeHTML(currentItem?.event_date || "")}"></div><div class="field field-wide"><label for="content-title">Title / name</label><input id="content-title" name="title" maxlength="160" required value="${escapeHTML(currentItem?.title || "")}" placeholder="Add a title, member name, or role"></div><div class="field field-wide"><label for="content-summary">Summary / subtitle</label><input id="content-summary" name="summary" maxlength="300" value="${escapeHTML(currentItem?.summary || "")}" placeholder="A short introduction, name, or position"></div><div class="field field-wide"><label for="content-body">Details / biography</label><textarea id="content-body" name="body" maxlength="12000" placeholder="Write the full update or profile details">${escapeHTML(currentItem?.body || "")}</textarea></div><div class="field field-wide"><label for="content-image">Image URL (HTTPS, optional)</label><input id="content-image" name="image_url" type="url" maxlength="2048" value="${escapeHTML(currentItem?.image_url || "")}" placeholder="https://example.com/image.jpg"></div><div class="field field-wide"><label><input name="published" type="checkbox" ${currentItem?.published !== false ? "checked" : ""}> Publish this item</label></div></div><div class="admin-actions"><button class="form-submit" type="submit">${currentItem ? "Save changes" : "Add content"}</button>${currentItem ? `<button class="admin-secondary" type="button" data-cancel-edit>Cancel edit</button>` : ""}</div></form><div class="admin-content"><h2>Manage content</h2>${savedItems}</div></section></div>`;
+      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">Site management</p><h1>Admin dashboard</h1><p>Manage all public page content and profiles. Site layout and styling remain part of the app code.</p></div></div>${localMessage ? `<div class="status-message error">${escapeHTML(localMessage)}</div>` : ""}<div class="admin-user"><span>Local admin: <strong>${ADMIN_EMAIL}</strong></span><button class="admin-secondary" type="button" data-signout>Lock admin</button></div><div class="status-message error"><strong>Local preview only:</strong> entering this email is not verified authentication. Changes are stored in this browser and do not sync to other people or devices.</div><section class="card admin-panel"><h2>${currentItem ? "Edit content" : "Add content"}</h2><p>Choose the page section, then add its content. Use HTTPS image URLs for member photos, gallery images, and executive portraits. Unpublished items stay hidden from public sections.</p><form id="content-form" data-id="${currentItem ? escapeHTML(currentItem.id) : ""}"><div class="admin-grid"><div class="field"><label for="content-section">Page section</label><select id="content-section" name="section" required>${sectionOptions}</select></div><div class="field"><label for="content-date">Event / birthday date (optional)</label><input id="content-date" name="event_date" type="date" value="${escapeHTML(currentItem?.event_date || "")}"></div><div class="field field-wide"><label for="content-title">Title / name</label><input id="content-title" name="title" maxlength="160" required value="${escapeHTML(currentItem?.title || "")}" placeholder="Add a title, member name, or role"></div><div class="field field-wide"><label for="content-summary">Summary / subtitle</label><input id="content-summary" name="summary" maxlength="300" value="${escapeHTML(currentItem?.summary || "")}" placeholder="A short introduction, name, or position"></div><div class="field field-wide"><label for="content-body">Details / biography</label><textarea id="content-body" name="body" maxlength="12000" placeholder="Write the full update or profile details">${escapeHTML(currentItem?.body || "")}</textarea></div><div class="field field-wide"><label for="content-image">Image URL (HTTPS, optional)</label><input id="content-image" name="image_url" type="url" maxlength="2048" value="${escapeHTML(currentItem?.image_url || "")}" placeholder="https://example.com/image.jpg"></div><div class="field field-wide"><label><input name="published" type="checkbox" ${currentItem?.published !== false ? "checked" : ""}> Publish this item</label></div></div><div class="admin-actions"><button class="form-submit" type="submit">${currentItem ? "Save changes" : "Add content"}</button>${currentItem ? `<button class="admin-secondary" type="button" data-cancel-edit>Cancel edit</button>` : ""}</div></form><div class="admin-content"><h2>Manage content</h2>${savedItems}</div></section></div>`;
     }
 
     const pages = {
@@ -450,9 +446,11 @@
     function isAdmin() { return localAdmin; }
 
     function render() {
+      if (activePage === "admin" && !isAdmin()) activePage = "home";
       const page = pages[activePage] || homePage;
       main.innerHTML = page();
       navItems.forEach(item => {
+        item.hidden = item.dataset.page === "admin" && !isAdmin();
         if (item.dataset.page === activePage) item.setAttribute("aria-current", "page");
         else item.removeAttribute("aria-current");
       });
@@ -474,8 +472,6 @@
         form.querySelector('[name="section"]').value = currentItem?.section || "home";
         form.addEventListener("submit", saveContent);
       }
-      const loginForm = document.querySelector("#admin-login-form");
-      if (loginForm) loginForm.addEventListener("submit", unlockLocalAdmin);
     }
 
     function showToast(message) {
@@ -486,21 +482,6 @@
       toast.textContent = message;
       document.body.append(toast);
       window.setTimeout(() => toast.remove(), 3500);
-    }
-
-    function unlockLocalAdmin(event) {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const email = String(new FormData(form).get("email") || "").trim().toLowerCase();
-      if (email !== ADMIN_EMAIL) {
-        localMessage = `Admin email does not match ${ADMIN_EMAIL}.`;
-        render();
-        return;
-      }
-      localAdmin = true;
-      localMessage = "";
-      render();
-      showToast("Local admin unlocked for this page session.");
     }
 
     function persistContent() {
@@ -556,6 +537,17 @@
         emailInput.setCustomValidity("Please enter a Gmail address ending in @gmail.com.");
         emailInput.reportValidity();
         emailInput.setCustomValidity("");
+        return;
+      }
+
+      if (email === ADMIN_EMAIL) {
+        localAdmin = true;
+        localMessage = "";
+        activePage = "admin";
+        dialog.close();
+        joinForm.reset();
+        render();
+        showToast("Admin section opened for this browser session. Email ownership is not verified.");
         return;
       }
 
@@ -703,7 +695,9 @@
       if (!(target instanceof Element)) return;
       const pageButton = target.closest("[data-page]");
       if (pageButton) {
-        activePage = pageButton.dataset.page || "home";
+        const requestedPage = pageButton.dataset.page || "home";
+        if (requestedPage === "admin" && !isAdmin()) return;
+        activePage = requestedPage;
         memberSearch = "";
         editingContentId = "";
         render();
