@@ -26,6 +26,7 @@
     }
 
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body { margin: 0; min-width: 320px; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); }
     button, input, select { font: inherit; }
     button { color: inherit; cursor: pointer; }
@@ -260,8 +261,10 @@
         <button type="button" data-page="exco">Exco</button>
         <button type="button" data-page="admin" hidden>Admin</button>
         <button class="join-button mobile-join" type="button" data-join>Sign in / Join</button>
+        <button class="join-button mobile-join" type="button" data-signout hidden>Sign out</button>
       </nav>
       <button class="join-button desktop-join" type="button" data-join><span aria-hidden="true">↗</span> Sign in / Join</button>
+      <button class="join-button desktop-join" type="button" data-signout hidden>Sign out</button>
     </div>
   </header>
   <main id="main-content" tabindex="-1"></main>
@@ -274,7 +277,7 @@
       <div class="dialog-body">
         <section id="signup-google-step">
           <div id="google-signin-button" class="google-signin-button"></div>
-          <p class="form-note">Google confirms your account email before signup or sign-in. Your profile and photos are saved in this browser only.</p>
+          <p class="form-note">Google confirms your account email. After signup, your profile is stored in the class database and photos in the restricted Drive folder.</p>
           <div id="google-auth-error" class="status-message error" role="alert" hidden></div>
         </section>
         <section id="signup-profile-step" hidden>
@@ -288,7 +291,7 @@
             <div class="field"><label for="photo-two">Photo 2</label><input id="photo-two" name="photo_two" type="file" accept="image/*" required></div>
             <div class="field"><label for="photo-three">Photo 3</label><input id="photo-three" name="photo_three" type="file" accept="image/*" required></div>
           </div>
-          <p class="form-note">Choose one profile photo and three additional photos. Photos are resized and saved in this browser only; they are not uploaded to a shared server.</p>
+          <p class="form-note">Choose one profile photo and three additional photos. Photos are resized before they are uploaded to the class Drive folder.</p>
           <div id="signup-error" class="status-message error" role="alert" hidden></div>
           <div class="form-actions"><button class="form-back" type="button" data-back-to-email>Back</button><button class="form-submit" type="submit">Save my profile</button></div>
         </section>
@@ -302,6 +305,7 @@
     const navItems = [...document.querySelectorAll("[data-page]")];
     const ADMIN_EMAIL = "jamesuzoka83@gmail.com";
     const GOOGLE_CLIENT_ID = "108266897974-jial2g7n581mifd4rm1i86sk8shjul65.apps.googleusercontent.com";
+    const APPS_SCRIPT_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbz8glP3BeeDZ2Ky8VJl89O-pQBGuSQJJCYMj2Dm2yZnXyvVMvyWQ8SbZ4_Guu3bFp0sfQ/exec";
     let activePage = "home";
     let memberSearch = "";
     let localAdmin = false;
@@ -311,6 +315,19 @@
     let activeSignupEmail = "";
     let googleIdentityInitialized = false;
     let googleSignInPending = false;
+    let currentGoogleAccount = null;
+    let currentGoogleIdToken = "";
+    let remoteProfiles = [];
+    let remoteProfileError = "";
+    let profilePhotoCache = new Map();
+    let backendFrame = null;
+    let backendBridgeWindow = null;
+    let backendReady = false;
+    let backendReadyPromise = null;
+    let backendReadyResolver = null;
+    let backendReadyTimeout = 0;
+    let backendRequestSequence = 0;
+    const pendingBackendRequests = new Map();
 
     const sectionNames = {
       home: "Homepage highlights",
@@ -353,29 +370,29 @@
     }
 
     function membersPage() {
-      const members = contentItems.filter(item => item.section === "members" && item.published);
-      const filtered = members.filter(item => `${item.title} ${item.nickname} ${item.summary} ${item.body}`.toLowerCase().includes(memberSearch.trim().toLowerCase()));
+      if (!isSignedIn()) return signInRequiredPage("Members");
+      const filtered = remoteProfiles.filter(item => `${item.title} ${item.nickname} ${item.summary}`.toLowerCase().includes(memberSearch.trim().toLowerCase()));
       const cards = filtered.length ? filtered.map(person => {
         const initials = person.title.trim().split(/\s+/).slice(0, 2).map(part => part[0].toUpperCase()).join("");
-        const image = safeImageUrl(person.image_url);
-        const profileImage = image || (person.image_data || "");
-        return `<article class="card member-card"><span class="member-avatar">${profileImage ? `<img src="${escapeHTML(profileImage)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : escapeHTML(initials)}</span><div><h3>${escapeHTML(person.title)}</h3>${person.nickname ? `<p>“${escapeHTML(person.nickname)}”</p>` : ""}${person.summary ? `<p>${escapeHTML(person.summary)}</p>` : ""}${person.body ? `<p>${escapeHTML(person.body)}</p>` : !person.summary ? `<p>CSSA Class of 2001</p>` : ""}</div></article>`;
+        const profileImage = person.profilePhotoId
+          ? `<img data-profile-photo="${escapeHTML(person.profilePhotoId)}" alt="" loading="lazy">`
+          : escapeHTML(initials);
+        return `<article class="card member-card"><span class="member-avatar">${profileImage}</span><div><h3>${escapeHTML(person.title)}</h3>${person.nickname ? `<p>“${escapeHTML(person.nickname)}”</p>` : ""}<p>${escapeHTML(person.summary || "CSSA Class of 2001")}</p></div></article>`;
       }).join("") : `<div class="card empty">No classmate profiles have been added yet.</div>`;
-      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">Together again</p><h1>Classmates</h1><p>Find your people and reconnect with the class.</p></div><label class="search-box"><span aria-hidden="true">⌕</span><input id="member-search" type="search" value="${escapeHTML(memberSearch)}" placeholder="Search classmates" aria-label="Search classmates"></label></div><div class="status-message">Member profiles are saved in this browser preview.</div><section class="member-grid" aria-label="Classmate directory">${cards}</section></div>`;
+      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">Together again</p><h1>Classmates</h1><p>Find your people and reconnect with the class.</p></div><label class="search-box"><span aria-hidden="true">⌕</span><input id="member-search" type="search" value="${escapeHTML(memberSearch)}" placeholder="Search classmates" aria-label="Search classmates"></label></div>${remoteProfileError ? `<div class="status-message error">${escapeHTML(remoteProfileError)}</div>` : `<div class="status-message">Profiles and photos are available to registered, signed-in class members.</div>`}<section class="member-grid" aria-label="Classmate directory">${cards}</section></div>`;
     }
 
     function birthdaysPage() {
       const birthdayPosts = contentItems.filter(item => item.section === "birthdays" && item.published);
-      const memberBirthdays = contentItems.filter(item =>
-        item.section === "members" && item.published &&
-        Number.isInteger(Number(item.birth_month)) && Number(item.birth_month) >= 1 && Number(item.birth_month) <= 12 &&
-        Number.isInteger(Number(item.birth_day)) && Number(item.birth_day) >= 1 && Number(item.birth_day) <= 31
+      const memberBirthdays = isSignedIn() ? remoteProfiles.filter(person =>
+        Number.isInteger(Number(person.birth_month)) && Number(person.birth_month) >= 1 && Number(person.birth_month) <= 12 &&
+        Number.isInteger(Number(person.birth_day)) && Number(person.birth_day) >= 1 && Number(person.birth_day) <= 31
       ).map(person => ({
         ...person,
         section: "birthdays",
         event_date: `2000-${String(person.birth_month).padStart(2, "0")}-${String(person.birth_day).padStart(2, "0")}`,
         summary: person.nickname ? `“${person.nickname}” · CSSA Class of 2001` : "CSSA Class of 2001"
-      }));
+      })) : [];
       const birthdays = [...birthdayPosts, ...memberBirthdays];
       const dateLabel = value => {
         if (!value) return "Date not added";
@@ -391,16 +408,24 @@
         const cards = birthdays.filter(person => monthOf(person) === month).map(person => `<article class="card content-card"><div class="content-meta"><span class="content-badge">Birthday</span><time>${escapeHTML(dateLabel(person.event_date || `2000-${String(month).padStart(2, "0")}-${String(dayOf(person)).padStart(2, "0")}`))}</time></div><h2>${escapeHTML(person.title)}</h2>${person.summary ? `<p class="content-summary">${escapeHTML(person.summary)}</p>` : ""}${person.body ? `<p class="content-body">${escapeHTML(person.body)}</p>` : ""}</article>`).join("");
         return `<section class="birthday-month" aria-label="${monthName} birthdays"><h2>${monthName}</h2>${cards}</section>`;
       }).join("");
-      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">A reason to celebrate</p><h1>Class birthdays</h1><p>Send your classmates a little birthday love.</p></div></div><section class="card birthday-banner"><span class="birthday-art" aria-hidden="true">🎂</span><div><h2>Celebrate the class</h2><p>Birthdays are automatically grouped by month from members’ profiles.</p></div><button class="secondary-button" type="button" data-join>Join the class</button></section><div class="content-list" aria-label="Class birthdays">${rows || `<div class="card empty">No birthdays have been added yet.</div>`}</div></div>`;
+      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">A reason to celebrate</p><h1>Class birthdays</h1><p>Send your classmates a little birthday love.</p></div></div><section class="card birthday-banner"><span class="birthday-art" aria-hidden="true">🎂</span><div><h2>Celebrate the class</h2><p>Member birthdays are available to registered, signed-in class members.</p></div>${isSignedIn() ? "" : `<button class="secondary-button" type="button" data-join>Sign in to view</button>`}</section>${remoteProfileError ? `<div class="status-message error">${escapeHTML(remoteProfileError)}</div>` : ""}<div class="content-list" aria-label="Class birthdays">${rows || `<div class="card empty">No birthdays have been added yet.</div>`}</div></div>`;
     }
 
     function galleryPage() {
-      const photos = contentItems.filter(item => item.section === "gallery" && item.published);
-      const tiles = photos.map(item => {
+      const sharedPhotos = contentItems.filter(item => item.section === "gallery" && item.published && !item.owner_email);
+      const profilePhotos = isSignedIn() ? remoteProfiles.flatMap(person =>
+        (person.otherPhotoIds || []).map((fileId, index) => ({
+          fileId,
+          title: `${person.title} · Photo ${index + 1}`,
+          summary: `Shared by ${person.nickname || person.title}`
+        }))
+      ) : [];
+      const tiles = [...sharedPhotos.map(item => {
         const image = safeImageUrl(item.image_url) || item.image_data || "";
         return `<article class="gallery-tile">${image ? `<img class="gallery-photo" src="${escapeHTML(image)}" alt="${escapeHTML(item.title)}" loading="lazy" referrerpolicy="no-referrer">` : ""}<div><span>${escapeHTML(item.title)}</span>${item.summary ? `<small>${escapeHTML(item.summary)}</small>` : ""}</div></article>`;
-      }).join("");
-      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">Then and now</p><h1>Class gallery</h1><p>A place for the moments and memories we share.</p></div></div><div class="status-message">Gallery entries are saved in this browser preview.</div>${tiles ? `<div class="gallery-grid" aria-label="Class memory gallery">${tiles}</div>` : `<div class="card empty">No class photos have been added yet.</div>`}</div>`;
+      }), ...profilePhotos.map(photo => `<article class="gallery-tile"><img class="gallery-photo" data-profile-photo="${escapeHTML(photo.fileId)}" alt="" loading="lazy"><div><span>${escapeHTML(photo.title)}</span><small>${escapeHTML(photo.summary)}</small></div></article>`)]
+        .join("");
+      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">Then and now</p><h1>Class gallery</h1><p>A place for the moments and memories we share.</p></div></div><div class="status-message">Member photos are only visible to registered, signed-in class members.${isSignedIn() ? "" : " Sign in and complete signup to view profile photos."}</div>${remoteProfileError ? `<div class="status-message error">${escapeHTML(remoteProfileError)}</div>` : ""}${tiles ? `<div class="gallery-grid" aria-label="Class memory gallery">${tiles}</div>` : `<div class="card empty">No class photos have been added yet.</div>`}</div>`;
     }
 
     function excoPage() {
@@ -439,7 +464,7 @@
       const currentItem = contentItems.find(item => item.id === editingContentId);
       const savedItems = contentItems.length ? contentItems.map(item => `<article class="admin-item"><div><h3>${escapeHTML(item.title)}</h3><p>${escapeHTML(sectionNames[item.section] || item.section)} · ${item.published ? "Published" : "Draft"}</p></div><div class="admin-item-actions"><button class="admin-secondary" type="button" data-edit="${escapeHTML(item.id)}">Edit</button><button class="admin-secondary" type="button" data-delete="${escapeHTML(item.id)}">Delete</button></div></article>`).join("") : `<div class="notice">No content has been added yet. Create your first item above.</div>`;
       const sectionOptions = Object.entries(sectionNames).map(([value, name]) => `<option value="${value}">${escapeHTML(name)}</option>`).join("");
-      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">Site management</p><h1>Admin dashboard</h1><p>Manage all public page content and profiles. Site layout and styling remain part of the app code.</p></div></div>${localMessage ? `<div class="status-message error">${escapeHTML(localMessage)}</div>` : ""}<div class="admin-user"><span>Google account: <strong>${ADMIN_EMAIL}</strong></span><button class="admin-secondary" type="button" data-signout>Lock admin</button></div><div class="status-message error"><strong>Browser-local admin:</strong> Google verifies the signed-in account in this browser, but this static app has no server-side authorization or shared database. Changes do not sync to other people or devices.</div><section class="card admin-panel"><h2>${currentItem ? "Edit content" : "Add content"}</h2><p>Choose the page section, then add its content. Use HTTPS image URLs for member photos, gallery images, and executive portraits. Unpublished items stay hidden from public sections.</p><form id="content-form" data-id="${currentItem ? escapeHTML(currentItem.id) : ""}"><div class="admin-grid"><div class="field"><label for="content-section">Page section</label><select id="content-section" name="section" required>${sectionOptions}</select></div><div class="field"><label for="content-date">Event / birthday date (optional)</label><input id="content-date" name="event_date" type="date" value="${escapeHTML(currentItem?.event_date || "")}"></div><div class="field field-wide"><label for="content-title">Title / name</label><input id="content-title" name="title" maxlength="160" required value="${escapeHTML(currentItem?.title || "")}" placeholder="Add a title, member name, or role"></div><div class="field field-wide"><label for="content-summary">Summary / subtitle</label><input id="content-summary" name="summary" maxlength="300" value="${escapeHTML(currentItem?.summary || "")}" placeholder="A short introduction, name, or position"></div><div class="field field-wide"><label for="content-body">Details / biography</label><textarea id="content-body" name="body" maxlength="12000" placeholder="Write the full update or profile details">${escapeHTML(currentItem?.body || "")}</textarea></div><div class="field field-wide"><label for="content-image">Image URL (HTTPS, optional)</label><input id="content-image" name="image_url" type="url" maxlength="2048" value="${escapeHTML(currentItem?.image_url || "")}" placeholder="https://example.com/image.jpg"></div><div class="field field-wide"><label><input name="published" type="checkbox" ${currentItem?.published !== false ? "checked" : ""}> Publish this item</label></div></div><div class="admin-actions"><button class="form-submit" type="submit">${currentItem ? "Save changes" : "Add content"}</button>${currentItem ? `<button class="admin-secondary" type="button" data-cancel-edit>Cancel edit</button>` : ""}</div></form><div class="admin-content"><h2>Manage content</h2>${savedItems}</div></section></div>`;
+      return `<div class="page"><div class="page-heading"><div><p class="eyebrow">Site management</p><h1>Admin dashboard</h1><p>Manage the site’s news, events, reports, and public highlights.</p></div></div>${localMessage ? `<div class="status-message error">${escapeHTML(localMessage)}</div>` : ""}<div class="admin-user"><span>Google account: <strong>${ADMIN_EMAIL}</strong></span><button class="admin-secondary" type="button" data-signout>Sign out</button></div><div class="status-message error"><strong>Content management is browser-local:</strong> Profiles are stored in the shared Google Sheet and photos in the restricted Drive folder. News, events, and other admin edits remain in this browser and do not sync to other people or devices.</div><section class="card admin-panel"><h2>${currentItem ? "Edit content" : "Add content"}</h2><p>Choose the page section, then add its content. Use HTTPS image URLs for member photos, gallery images, and executive portraits. Unpublished items stay hidden from public sections.</p><form id="content-form" data-id="${currentItem ? escapeHTML(currentItem.id) : ""}"><div class="admin-grid"><div class="field"><label for="content-section">Page section</label><select id="content-section" name="section" required>${sectionOptions}</select></div><div class="field"><label for="content-date">Event / birthday date (optional)</label><input id="content-date" name="event_date" type="date" value="${escapeHTML(currentItem?.event_date || "")}"></div><div class="field field-wide"><label for="content-title">Title / name</label><input id="content-title" name="title" maxlength="160" required value="${escapeHTML(currentItem?.title || "")}" placeholder="Add a title, member name, or role"></div><div class="field field-wide"><label for="content-summary">Summary / subtitle</label><input id="content-summary" name="summary" maxlength="300" value="${escapeHTML(currentItem?.summary || "")}" placeholder="A short introduction, name, or position"></div><div class="field field-wide"><label for="content-body">Details / biography</label><textarea id="content-body" name="body" maxlength="12000" placeholder="Write the full update or profile details">${escapeHTML(currentItem?.body || "")}</textarea></div><div class="field field-wide"><label for="content-image">Image URL (HTTPS, optional)</label><input id="content-image" name="image_url" type="url" maxlength="2048" value="${escapeHTML(currentItem?.image_url || "")}" placeholder="https://example.com/image.jpg"></div><div class="field field-wide"><label><input name="published" type="checkbox" ${currentItem?.published !== false ? "checked" : ""}> Publish this item</label></div></div><div class="admin-actions"><button class="form-submit" type="submit">${currentItem ? "Save changes" : "Add content"}</button>${currentItem ? `<button class="admin-secondary" type="button" data-cancel-edit>Cancel edit</button>` : ""}</div></form><div class="admin-content"><h2>Manage content</h2>${savedItems}</div></section></div>`;
     }
 
     const pages = {
@@ -459,6 +484,129 @@
     }
 
     function isAdmin() { return localAdmin; }
+    function isSignedIn() { return Boolean(currentGoogleAccount && currentGoogleIdToken); }
+
+    function signInRequiredPage(section) {
+      return `<div class="page"><section class="card empty"><h1>${escapeHTML(section)} are for class members</h1><p>Sign in with a verified Gmail account and complete signup to view member profiles, birthdays, and photos.</p><button class="hero-button" type="button" data-join>Sign in with Google</button></section></div>`;
+    }
+
+    function initializeBackendBridge() {
+      if (!APPS_SCRIPT_WEB_APP_URL) {
+        return Promise.reject(new Error("Profile storage is not connected yet. Deploy the Google Apps Script backend and add its web app URL."));
+      }
+      if (backendReady) return Promise.resolve();
+      if (!backendReadyPromise) {
+        backendReadyPromise = new Promise((resolve, reject) => {
+          backendReadyResolver = resolve;
+          backendReadyTimeout = window.setTimeout(() => {
+            backendReadyPromise = null;
+            backendReadyResolver = null;
+            if (backendFrame) backendFrame.src = APPS_SCRIPT_WEB_APP_URL;
+            reject(new Error("The profile database did not respond. Check the Apps Script web app deployment."));
+          }, 20000);
+        });
+        if (!backendFrame) {
+          backendFrame = document.createElement("iframe");
+          backendFrame.title = "Secure CSSA profile service";
+          backendFrame.hidden = true;
+          backendFrame.src = APPS_SCRIPT_WEB_APP_URL;
+          document.body.append(backendFrame);
+        }
+      }
+      return backendReadyPromise;
+    }
+
+    function isBackendFrameSource(source) {
+      if (!backendFrame) return false;
+      let current = source;
+      for (let depth = 0; current && depth < 4; depth++) {
+        if (current === backendFrame.contentWindow) return true;
+        if (current === current.parent) break;
+        current = current.parent;
+      }
+      return false;
+    }
+
+    function sendBackendRequest(action, data = {}) {
+      if (!currentGoogleIdToken) return Promise.reject(new Error("Sign in with Google before accessing member profiles."));
+      return initializeBackendBridge().then(() => new Promise((resolve, reject) => {
+        const requestId = `cssa-${Date.now()}-${++backendRequestSequence}`;
+        const timeout = window.setTimeout(() => {
+          pendingBackendRequests.delete(requestId);
+          reject(new Error("The profile database request timed out. Please try again."));
+        }, 30000);
+        pendingBackendRequests.set(requestId, {
+          resolve: result => {
+            window.clearTimeout(timeout);
+            if (!result?.ok) reject(new Error(result?.error || "The profile database request failed."));
+            else resolve(result.data);
+          },
+          reject
+        });
+        if (!backendBridgeWindow) {
+          window.clearTimeout(timeout);
+          pendingBackendRequests.delete(requestId);
+          reject(new Error("The profile service bridge did not initialize correctly."));
+          return;
+        }
+        backendBridgeWindow.postMessage({
+          id: requestId,
+          request: { ...data, action, idToken: currentGoogleIdToken }
+        }, "*");
+      }));
+    }
+
+    window.addEventListener("message", event => {
+      if (!isBackendFrameSource(event.source)) return;
+      if (event.data?.type === "cssa-backend-ready") {
+        backendBridgeWindow = event.source;
+        backendReady = true;
+        window.clearTimeout(backendReadyTimeout);
+        backendReadyResolver?.();
+        backendReadyResolver = null;
+        return;
+      }
+      const pending = pendingBackendRequests.get(event.data?.id);
+      if (!pending) return;
+      pendingBackendRequests.delete(event.data.id);
+      pending.resolve(event.data.result);
+    });
+
+    async function loadRemoteProfiles() {
+      const profiles = await sendBackendRequest("listProfiles");
+      if (!Array.isArray(profiles)) throw new Error("The profile database returned an invalid roster.");
+      remoteProfiles = profiles;
+      remoteProfileError = "";
+      render();
+    }
+
+    function hydrateProfilePhotos() {
+      const images = [...main.querySelectorAll("img[data-profile-photo]")];
+      images.forEach(image => {
+        const fileId = image.dataset.profilePhoto;
+        const cached = profilePhotoCache.get(fileId);
+        if (cached?.data) {
+          image.src = cached.data;
+          return;
+        }
+        if (cached?.loading || cached?.error || !isSignedIn()) return;
+        profilePhotoCache.set(fileId, { loading: true });
+        const accountToken = currentGoogleIdToken;
+        sendBackendRequest("getPhoto", { fileId }).then(data => {
+          if (accountToken !== currentGoogleIdToken || !image.isConnected) return;
+          if (typeof data !== "string" || !data.startsWith("data:image/")) {
+            throw new Error("The profile service returned an invalid photo.");
+          }
+          profilePhotoCache.set(fileId, { data });
+          image.src = data;
+        }).catch(error => {
+          if (accountToken !== currentGoogleIdToken) return;
+          profilePhotoCache.set(fileId, { error: true });
+          remoteProfileError = `Could not load a member photo: ${error.message}`;
+          if (["members", "birthdays", "gallery"].includes(activePage)) render();
+        });
+      });
+    }
 
     function render() {
       if (activePage === "admin" && !isAdmin()) activePage = "home";
@@ -469,9 +617,11 @@
         if (item.dataset.page === activePage) item.setAttribute("aria-current", "page");
         else item.removeAttribute("aria-current");
       });
+      document.querySelectorAll("[data-join]").forEach(item => { item.hidden = isSignedIn(); });
+      document.querySelectorAll("[data-signout]").forEach(item => { item.hidden = !isSignedIn(); });
       if (activePage === "members") {
         const search = document.querySelector("#member-search");
-        search.addEventListener("input", event => {
+        search?.addEventListener("input", event => {
           memberSearch = event.currentTarget.value;
           const selectionStart = event.currentTarget.selectionStart;
           const selectionEnd = event.currentTarget.selectionEnd;
@@ -487,6 +637,7 @@
         form.querySelector('[name="section"]').value = currentItem?.section || "home";
         form.addEventListener("submit", saveContent);
       }
+      hydrateProfilePhotos();
     }
 
     function showToast(message) {
@@ -550,14 +701,6 @@
       document.querySelector("#dialog-subtitle").textContent = `Google account: ${email}`;
       document.querySelector("#signup-error").hidden = true;
 
-      const existing = contentItems.find(item => item.section === "members" && item.owner_email === email);
-      if (existing) {
-        dialog.close();
-        activePage = isAdmin() ? "admin" : "members";
-        render();
-        showToast(`Welcome back, ${existing.title.split(/\s+/)[0]}. Your Google account was verified.`);
-        return;
-      }
       document.querySelector("#full-name").value = fullName;
       document.querySelector("#full-name").focus();
     }
@@ -660,14 +803,35 @@
       googleSignInPending = true;
       const errorBox = document.querySelector("#google-auth-error");
       errorBox.hidden = true;
+      let verifiedAccount = null;
       try {
         if (!response?.credential) throw new Error("Google did not return a sign-in credential.");
-        const account = await verifyGoogleCredential(response.credential);
-        localAdmin = account.email === ADMIN_EMAIL;
+        verifiedAccount = await verifyGoogleCredential(response.credential);
+        currentGoogleAccount = verifiedAccount;
+        currentGoogleIdToken = response.credential;
+        localAdmin = verifiedAccount.email === ADMIN_EMAIL;
         if (localAdmin) localMessage = "";
-        showProfileForm(account.email, account.name);
+        const existingProfile = await sendBackendRequest("getMyProfile");
+        if (existingProfile) {
+          const profiles = await sendBackendRequest("listProfiles");
+          if (!Array.isArray(profiles)) throw new Error("The profile database returned an invalid roster.");
+          remoteProfiles = profiles;
+          remoteProfileError = "";
+          profilePhotoCache.clear();
+          dialog.close();
+          activePage = isAdmin() ? "admin" : "members";
+          render();
+          showToast(`Welcome back, ${existingProfile.fullName.split(/\s+/)[0]}. Your Google account was verified.`);
+        } else {
+          showProfileForm(verifiedAccount.email, verifiedAccount.name);
+        }
       } catch (error) {
-        errorBox.textContent = `Google sign-in failed: ${error.message}`;
+        currentGoogleAccount = null;
+        currentGoogleIdToken = "";
+        localAdmin = false;
+        remoteProfiles = [];
+        profilePhotoCache.clear();
+        errorBox.textContent = `${verifiedAccount ? "Could not access the member database" : "Google sign-in failed"}: ${error.message}`;
         errorBox.hidden = false;
       } finally {
         googleSignInPending = false;
@@ -849,9 +1013,14 @@
       if (target.closest("[data-signout]")) {
         localAdmin = false;
         editingContentId = "";
+        currentGoogleAccount = null;
+        currentGoogleIdToken = "";
+        remoteProfiles = [];
+        remoteProfileError = "";
+        profilePhotoCache.clear();
         window.google?.accounts?.id?.disableAutoSelect();
         render();
-        showToast("Local admin locked.");
+        showToast("You have signed out. Member profiles and photos are no longer available.");
       }
     });
 
@@ -872,7 +1041,7 @@
       const birthDay = Number(data.get("birth_day"));
       if (!name || !nickname || !activeSignupEmail || !birthMonth || !birthDay) return;
       submitButton.disabled = true;
-      submitButton.textContent = "Preparing your photos…";
+      submitButton.textContent = "Uploading photos to Drive…";
       errorBox.hidden = true;
       try {
         const [profilePhoto, photoOne, photoTwo, photoThree] = await Promise.all([
@@ -881,57 +1050,27 @@
           encodeImage(data.get("photo_two")),
           encodeImage(data.get("photo_three"))
         ]);
-        const existing = contentItems.find(item => item.section === "members" && item.owner_email === activeSignupEmail);
-        const previousContent = contentItems;
-        const createdAt = existing?.created_at || new Date().toISOString();
-        const memberRecord = {
-          ...existing,
-          id: existing?.id || createId(),
-          section: "members",
-          title: name,
-          nickname,
-          summary: "CSSA Class of 2001",
-          body: "",
-          birth_month: birthMonth,
-          birth_day: birthDay,
-          image_url: "",
-          image_data: profilePhoto,
-          published: true,
-          created_at: createdAt,
-          owner_email: activeSignupEmail
-        };
-        const newPhotos = [photoOne, photoTwo, photoThree].map((imageData, index) => ({
-          id: createId(),
-          section: "gallery",
-          title: `${name} · Photo ${index + 1}`,
-          nickname,
-          summary: `Shared by ${nickname}`,
-          body: "",
-          event_date: null,
-          image_url: "",
-          image_data: imageData,
-          published: true,
-          created_at: createdAt,
-          owner_email: activeSignupEmail,
-          member_id: memberRecord.id
-        }));
-        contentItems = contentItems.filter(item =>
-          !(item.owner_email === activeSignupEmail && (item.section === "members" || item.section === "gallery"))
-        );
-        contentItems = [memberRecord, ...newPhotos, ...contentItems];
-        if (!persistContent()) {
-          contentItems = previousContent;
-          errorBox.textContent = localMessage;
-          errorBox.hidden = false;
-          return;
-        }
+        await sendBackendRequest("saveProfile", {
+          profile: {
+            fullName: name,
+            nickname,
+            birthMonth,
+            birthDay,
+            photos: [profilePhoto, photoOne, photoTwo, photoThree]
+          }
+        });
+        const profiles = await sendBackendRequest("listProfiles");
+        if (!Array.isArray(profiles)) throw new Error("The profile database returned an invalid roster.");
+        remoteProfiles = profiles;
+        remoteProfileError = "";
+        profilePhotoCache.clear();
         dialog.close();
         joinForm.reset();
         activeSignupEmail = "";
         updateBirthdayDays();
         activePage = isAdmin() ? "admin" : "members";
         render();
-        showToast(`Welcome, ${name.split(/\s+/)[0]}! Your profile and four photos are saved in this browser.${isAdmin() ? " Admin tools are available to you." : ""}`);
+        showToast(`Welcome, ${name.split(/\s+/)[0]}! Your profile is in the shared database and your photos are stored in Drive.${isAdmin() ? " Admin tools are available to you." : ""}`);
       } catch (error) {
         errorBox.textContent = `Could not save your profile: ${error.message}`;
         errorBox.hidden = false;
