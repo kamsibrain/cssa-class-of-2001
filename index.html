@@ -134,7 +134,7 @@
     .site-footer { border-top: 1px solid var(--line); background: #fff; }
     .footer-inner { display: flex; width: min(1120px, calc(100% - 48px)); min-height: 75px; align-items: center; justify-content: space-between; gap: 15px; margin: auto; color: var(--muted); font-size: 11px; }
     .footer-inner strong { color: #3f5d55; }
-    dialog { width: min(560px, calc(100% - 32px)); max-height: min(90vh, 760px); padding: 0; overflow: auto; border: 1px solid var(--line); border-radius: 14px; background: #fff; box-shadow: 0 24px 80px rgba(12, 38, 35, .24); }
+    dialog { width: min(560px, calc(100% - 32px)); max-height: min(90vh, 760px); max-height: min(90dvh, 760px); padding: 0; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 14px; background: #fff; box-shadow: 0 24px 80px rgba(12, 38, 35, .24); }
     dialog::backdrop { background: rgba(11, 33, 35, .54); backdrop-filter: blur(3px); }
     .dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding: 22px 23px 17px; border-bottom: 1px solid #edf0eb; }
     .dialog-head h2 { margin: 0; font: 700 23px var(--serif); }
@@ -184,6 +184,8 @@
       .header-inner { width: min(100% - 32px, 680px); min-height: 68px; flex-wrap: wrap; gap: 10px; padding: 10px 0 0; }
       .brand { margin-right: auto; }
       .nav { order: 3; width: 100%; justify-content: space-between; gap: 0; overflow-x: auto; }
+      .nav { max-width: 100%; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .nav::-webkit-scrollbar { display: none; }
       .nav button { padding: 9px 10px 11px; font-size: 12px; white-space: nowrap; }
       .join-button { min-height: 37px; padding: 0 12px; font-size: 11px; }
       .page { width: min(100% - 32px, 680px); padding-top: 21px; }
@@ -199,13 +201,14 @@
       .brand-copy strong { font-size: 11px; }
       .brand-copy small { font-size: 9px; }
       .crest { width: 38px; height: 38px; flex-basis: 38px; }
-      .nav { flex-wrap: wrap; justify-content: flex-start; overflow: visible; }
+      .nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; overflow: visible; margin: 0; padding: 0 0 4px; }
       .desktop-join { display: inline-flex; min-height: 33px; padding: 0 10px; font-size: 10px; }
       .mobile-join { display: none; }
-      .nav button { flex: 0 0 auto; padding-right: 7px; padding-left: 7px; font-size: 11px; }
+      .nav button { min-width: 0; min-height: 40px; padding: 7px 3px; font-size: 10px; white-space: normal; }
       .page { width: calc(100% - 24px); padding-top: 13px; }
       .hero { min-height: 273px; padding: 30px 17px; border-radius: 15px; }
       .hero-crest { width: 53px; height: 53px; }
+      .hero h1 { font-size: clamp(26px, 8vw, 36px); }
       .hero-subtitle { margin: 8px 0 18px; }
       .section-heading { align-items: flex-start; margin-top: 24px; }
       .section-heading h2, .page-heading h1 { font-size: 21px; }
@@ -225,6 +228,14 @@
       .gallery-tile { padding: 12px; }
       .gallery-tile span { font-size: 15px; }
       .footer-inner { width: calc(100% - 24px); align-items: flex-start; flex-direction: column; justify-content: center; gap: 3px; padding: 16px 0; }
+      dialog { width: calc(100% - 20px); max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px); border-radius: 12px; }
+      .dialog-head { padding: 18px 17px 14px; }
+      .dialog-head h2 { font-size: 21px; }
+      .dialog-body { padding: 16px 17px calc(18px + env(safe-area-inset-bottom)); }
+      #join-dialog .field input:not([type="file"]), #join-dialog .field select { min-height: 44px; font-size: 16px; }
+      #join-dialog .field input[type="file"] { min-height: 44px; max-width: 100%; font-size: 12px; }
+      .form-actions { position: sticky; bottom: calc(-1 * env(safe-area-inset-bottom)); padding: 8px 0 0; background: #fff; }
+      .form-back, .form-actions .form-submit { min-height: 46px; }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
   </style>
@@ -304,7 +315,7 @@
       members: "Members",
       birthdays: "Birthdays",
       gallery: "Gallery",
-      exco: "Excos"
+      exco: "Exco"
     };
     const CONTENT_STORAGE_KEY = "cssa-class-2001-content-v1";
     const MAX_IMAGE_FILE_BYTES = 12 * 1024 * 1024;
@@ -434,7 +445,7 @@
       reports: () => contentListingPage("reports"),
       birthdays: birthdaysPage,
       gallery: galleryPage,
-      excos: excosPage,
+      exco: excoPage,
       admin: adminPage
     };
 
