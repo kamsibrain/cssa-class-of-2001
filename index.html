@@ -553,7 +553,7 @@
       const existing = contentItems.find(item => item.section === "members" && item.owner_email === email);
       if (existing) {
         dialog.close();
-        activePage = "members";
+        activePage = isAdmin() ? "admin" : "members";
         render();
         showToast(`Welcome back, ${existing.title.split(/\s+/)[0]}. Your Google account was verified.`);
         return;
@@ -663,17 +663,8 @@
       try {
         if (!response?.credential) throw new Error("Google did not return a sign-in credential.");
         const account = await verifyGoogleCredential(response.credential);
-        if (account.email === ADMIN_EMAIL) {
-          localAdmin = true;
-          localMessage = "";
-          activePage = "admin";
-          activeSignupEmail = "";
-          dialog.close();
-          joinForm.reset();
-          render();
-          showToast("Google account verified. Admin access is limited to this browser session.");
-          return;
-        }
+        localAdmin = account.email === ADMIN_EMAIL;
+        if (localAdmin) localMessage = "";
         showProfileForm(account.email, account.name);
       } catch (error) {
         errorBox.textContent = `Google sign-in failed: ${error.message}`;
@@ -938,9 +929,9 @@
         joinForm.reset();
         activeSignupEmail = "";
         updateBirthdayDays();
-        activePage = "members";
+        activePage = isAdmin() ? "admin" : "members";
         render();
-        showToast(`Welcome, ${name.split(/\s+/)[0]}! Your profile and four photos are saved in this browser.`);
+        showToast(`Welcome, ${name.split(/\s+/)[0]}! Your profile and four photos are saved in this browser.${isAdmin() ? " Admin tools are available to you." : ""}`);
       } catch (error) {
         errorBox.textContent = `Could not save your profile: ${error.message}`;
         errorBox.hidden = false;
